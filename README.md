@@ -1,4 +1,7 @@
 # OpenFactoryIntegration
+Exemples d'implémentation d'adapteurs pour communiquer avec OpenFactory par MTConnect.
+
+## Principe général
 Pour intégrer des appareils (senseurs, machines, etc) avec OpenFactory utilisant MTConnect, il faut passer par un adapteur si l'appareil que l'on veut surveiller n'est pas déjà fait pour communiquer avec MTConnect. 
 ![image](https://github.com/user-attachments/assets/1fd54c6e-5c0a-4098-bb16-2fcd3ed83264) 
 OpenFactory agit à la fois comme l'agent et l'application. Un adapteur s'assure d'acheminer l'information nécessaire à l'agent dans le bon format. 
