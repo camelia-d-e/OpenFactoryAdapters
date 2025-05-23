@@ -1,0 +1,1 @@
+from .minimaldevice import MinimalDevice
