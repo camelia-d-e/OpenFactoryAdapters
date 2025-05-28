@@ -5,19 +5,22 @@
 
  Circuit:
  * Ethernet shield attached to pins 10, 11, 12, 13 if not using OPTA 
- * Optocoupler collector pin attached to digital pin A0
+ * Each optocoupler attached to a separate digital in pin (values between A0 and A7).
 
  created 16 May 2025
  */
  #include <Ethernet.h>
 
-const uint HEARTBEAT_TIMEOUT = 10000;
-const uint OPTO_PIN = A0;
-const uint TRANSITION_TIME_DELAY = 3000;
+const uint16_t HEARTBEAT_TIMEOUT = 10000;
+const uint16_t TRANSITION_TIME_DELAY = 3000;
+
+const uint8_t DATAITEMS_NB = 2;
+const String DATAITEM_IDS[] = {"A1ToolPlus", "A2ToolPlus"};
+const uint8_t DATAITEM_PINS[] = {A0, A1};
 
 String incoming = "";
 boolean alreadyConnected = false;
-String currState = "OFF";
+String currState[DATAITEMS_NB];
 
 
 // Static IP configuration for the Opta device.
@@ -31,7 +34,10 @@ void setup() {
 
   while(!Serial);
 
-  pinMode(OPTO_PIN, INPUT);
+  for(int i = 0; i < DATAITEMS_NB; i++){
+    pinMode(DATAITEM_PINS[i], INPUT);
+  }
+
 
   //Try starting Ethernet connection via DHCP
   if (Ethernet.begin() == 0) {
@@ -86,23 +92,30 @@ void loop() {
         client.println("* adapterVersion: 2.0\n");
         Serial.println("Sent: * adapterVersion: 2.0\n");
 
-        currState = (digitalRead(OPTO_PIN)?"OFF":"ON");
+        for(int i = 0; i < DATAITEMS_NB; i++){
+          currState[i] = (digitalRead(DATAITEM_PINS[i])?"OFF":"ON");
+          sendSHDRStringData(DATAITEM_IDS[i], currState[i]);
+        }
 
-        client.println("|A1ToolPlus|" + String(currState) + "\n");
-        Serial.println("Sent: |A1ToolPlus|" + String(currState) +"\n");
         alreadyConnected = true;
       }
       //send data when state changes
       else
       {
-        String newState = (digitalRead(OPTO_PIN)?"OFF":"ON");
-        if(newState != currState)
-        {
-          delay(TRANSITION_TIME_DELAY);
-          client.println("|A1ToolPlus|" + String(newState) +"\n");
-          Serial.println("Sent: |A1ToolPlus|" + String(newState) +"\n");
-          currState = newState;
+        String newState[DATAITEMS_NB];
+
+        for(int i = 0; i < DATAITEMS_NB; i++){
+          newState[i] = (digitalRead(DATAITEM_PINS[i])?"OFF":"ON");
+
+          if(newState[i] != currState[i])
+          {
+            delay(TRANSITION_TIME_DELAY);
+            sendSHDRStringData(DATAITEM_IDS[i], newState[i]);
+            currState[i] = newState[i];
+          }
+
         }
+
       }
 
       if (client.available())
@@ -122,4 +135,10 @@ void loop() {
     Serial.println("client disconnected");
     alreadyConnected = false;
   }
+}
+
+void sendSHDRStringData(String dataitemId, String value)
+{
+  client.println("|"+ dataitemId + "|" + value + "\n");
+  Serial.println("Sent: |"+ dataitemId + "|" + value + "\n");
 }
