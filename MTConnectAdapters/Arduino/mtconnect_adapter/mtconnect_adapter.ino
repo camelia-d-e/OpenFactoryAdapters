@@ -5,31 +5,33 @@
 
  Circuit:
  * Ethernet shield attached to pins 10, 11, 12, 13 if not using OPTA 
- * Optocoupler attached to digital pin 8.
+ * Optocoupler collector pin attached to digital pin A0
 
  created 16 May 2025
  */
  #include <Ethernet.h>
 
-const int HEARTBEAT_TIMEOUT = 10000;
-const int OPTO_PIN = 8;
+const uint HEARTBEAT_TIMEOUT = 10000;
+const uint OPTO_PIN = A0;
+const uint TRANSITION_TIME_DELAY = 3000;
 
 String incoming = "";
 boolean alreadyConnected = false;
-int currState = 0;
+String currState = "OFF";
+
 
 // Static IP configuration for the Opta device.
-IPAddress ip(10, 130, 22, 84); 
+IPAddress ip(10, 130, 22, 84);
 
 EthernetServer server(7878);
 EthernetClient client;
 
 void setup() {
   Serial.begin(9600);
-  
+
   while(!Serial);
 
-  //pinMode(OPTO_PIN, INPUT);
+  pinMode(OPTO_PIN, INPUT);
 
   //Try starting Ethernet connection via DHCP
   if (Ethernet.begin() == 0) {
@@ -58,10 +60,9 @@ void setup() {
 
 void loop() {
   // listen for incoming mtconnect agent
-  loopTime = millis();
   client = server.accept();
 
-  if(client) 
+  if(client)
   {
     Serial.println("New client");
     boolean currentLineIsBlank = true;
@@ -85,33 +86,32 @@ void loop() {
         client.println("* adapterVersion: 2.0\n");
         Serial.println("Sent: * adapterVersion: 2.0\n");
 
-        currState = digitalRead(OPTO_PIN);
+        currState = (digitalRead(OPTO_PIN)?"OFF":"ON");
 
-        client.println("|ToolPlus_A1|" + String(currState) + "\n");
-        Serial.println("Sent: |ToolPlus_A1|" + String(currState) +"\n");
+        client.println("|A1ToolPlus|" + String(currState) + "\n");
+        Serial.println("Sent: |A1ToolPlus|" + String(currState) +"\n");
         alreadyConnected = true;
-      } 
+      }
       //send data when state changes
-      else 
+      else
       {
-        int newState = digitalRead(OPTO_PIN);
+        String newState = (digitalRead(OPTO_PIN)?"OFF":"ON");
         if(newState != currState)
         {
-          client.println("|ToolPlus_A1|" + String(newState) +"\n");
-          Serial.println("Sent: |ToolPlus_A1|" + String(newState) +"\n");
-
+          delay(TRANSITION_TIME_DELAY);
+          client.println("|A1ToolPlus|" + String(newState) +"\n");
+          Serial.println("Sent: |A1ToolPlus|" + String(newState) +"\n");
           currState = newState;
-        }  
+        }
       }
 
-      if (client.available()) 
+      if (client.available())
       {
         char c = client.read();
         incoming += c;
 
         if(incoming.indexOf("* PING") >= 0)
         {
-          lastPing = loopTime;
           client.println("* PONG " + String(HEARTBEAT_TIMEOUT) + "\n");
           Serial.println("Sent: * PONG " + String(HEARTBEAT_TIMEOUT) + "\n");
           incoming = "";
@@ -120,5 +120,6 @@ void loop() {
     }
     client.stop();
     Serial.println("client disconnected");
+    alreadyConnected = false;
   }
 }
