@@ -1,0 +1,1 @@
+git+https://github.com/Demo-Smart-Factory-Concordia-University/MTCAdapters.git

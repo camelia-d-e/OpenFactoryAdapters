@@ -1,6 +1,6 @@
 # OpenFactoryIntegration
 Exemples d'implémentation d'adapteurs pour communiquer avec OpenFactory par MTConnect.
-
+Pour un exemple d'implémentation d'un adapteur en Python, exécuter : pip install git+https://github.com/Demo-Smart-Factory-Concordia-University/MTCAdapters.git (aussi présent dans requirements.txt)
 ## Principe général
 Pour intégrer des appareils (senseurs, machines, etc) avec OpenFactory utilisant MTConnect, il faut passer par un adapteur si l'appareil que l'on veut surveiller n'est pas déjà fait pour communiquer avec MTConnect. 
 ![image](https://github.com/user-attachments/assets/1fd54c6e-5c0a-4098-bb16-2fcd3ed83264) 
