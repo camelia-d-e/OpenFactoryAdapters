@@ -32,6 +32,10 @@ const uint8_t DATAITEMS_NB = 2;
 const String DATAITEM_IDS[] = {"A1ToolPlus", "A2ToolPlus"};
 const uint8_t DATAITEM_PINS[] = {A0, A1};
 
+// OPC UA namespace and device identifiers to match Python supervisor
+const char* NAMESPACE_URI = "demofactory";
+const char* DEVICE_BROWSE_NAME = "IVAC";
+
 /**************************************************************************************
  * GLOBAL VARIABLES
  **************************************************************************************/
@@ -58,14 +62,71 @@ boolean alreadyConnected = false;
 String currState[DATAITEMS_NB];
 String ledState = "false";
 
-// OPC UA LED control node
-UA_NodeId ledControlNodeId;
+// OPC UA custom namespace and device node
+UA_UInt16 custom_namespace_idx = 0;
+UA_NodeId device_node_id = UA_NODEID_NULL;
 
 /**************************************************************************************
  * DEFINES
  **************************************************************************************/
 
 REDIRECT_STDOUT_TO(Serial)
+
+/**************************************************************************************
+ * OPC UA METHOD CALLBACKS
+ **************************************************************************************/
+
+// Method callback for LED control
+static UA_StatusCode ledControlMethodCallback(UA_Server *server,
+                                            const UA_NodeId *sessionId, void *sessionContext,
+                                            const UA_NodeId *methodId, void *methodContext,
+                                            const UA_NodeId *objectId, void *objectContext,
+                                            size_t inputSize, const UA_Variant *input,
+                                            size_t outputSize, UA_Variant *output) {
+
+    if (inputSize == 1 && input[0].type == &UA_TYPES[UA_TYPES_STRING]) {
+        UA_String *inputString = (UA_String*)input[0].data;
+        String command = String((char*)inputString->data).substring(0, inputString->length);
+
+        UA_LOG_INFO(UA_Log_Stdout, UA_LOGCATEGORY_SERVER, "LED Control command received: %s", command.c_str());
+
+        String result = "OK";
+
+        // Parse command
+        if (command.equalsIgnoreCase("ON") || command.equalsIgnoreCase("true") || command.equalsIgnoreCase("1")) {
+            pinMode(LED_PIN, OUTPUT);
+            digitalWrite(LED_PIN, HIGH);
+            ledState = "true";
+            UA_LOG_INFO(UA_Log_Stdout, UA_LOGCATEGORY_SERVER, "LED turned ON");
+        }
+        else if (command.equalsIgnoreCase("OFF") || command.equalsIgnoreCase("false") || command.equalsIgnoreCase("0")) {
+            pinMode(LED_PIN, OUTPUT);
+            digitalWrite(LED_PIN, LOW);
+            ledState = "false";
+            UA_LOG_INFO(UA_Log_Stdout, UA_LOGCATEGORY_SERVER, "LED turned OFF");
+        }
+        else if (command.equalsIgnoreCase("TOGGLE")) {
+            pinMode(LED_PIN, OUTPUT);
+            bool currentState = digitalRead(LED_PIN);
+            digitalWrite(LED_PIN, !currentState);
+            ledState = !currentState ? "true" : "false";
+            UA_LOG_INFO(UA_Log_Stdout, UA_LOGCATEGORY_SERVER, "LED toggled to %s", ledState.c_str());
+        }
+        else {
+            result = "Unknown command. Use: ON, OFF, TOGGLE";
+            UA_LOG_WARNING(UA_Log_Stdout, UA_LOGCATEGORY_SERVER, "Unknown LED command: %s", command.c_str());
+        }
+
+        // Set output
+        if (outputSize == 1) {
+            UA_String resultString = UA_STRING_ALLOC(result.c_str());
+            UA_Variant_setScalarCopy(&output[0], &resultString, &UA_TYPES[UA_TYPES_STRING]);
+            UA_String_clear(&resultString);
+        }
+    }
+
+    return UA_STATUSCODE_GOOD;
+}
 
 /**************************************************************************************
  * LOCAL FUNCTIONS
@@ -91,28 +152,90 @@ static PinStatus arduino_opta_digital_read(pin_size_t const pin)
     return LOW;
 }
 
-// OPC UA LED Control Write Callback
-static UA_StatusCode ledControlWriteCallback(UA_Server *server,
-                                             const UA_NodeId *sessionId, void *sessionContext,
-                                             const UA_NodeId *nodeId, void *nodeContext,
-                                             const UA_NumericRange *range, const UA_DataValue *data)
-{
-  if(data->hasValue && data->value.type == &UA_TYPES[UA_TYPES_BOOLEAN]) {
-    UA_Boolean ledValue = *(UA_Boolean*)data->value.data;
+// Create custom namespace and device node
+static UA_StatusCode createCustomNamespaceAndDevice(UA_Server *server) {
+    // Add custom namespace
+    UA_String namespaceUri = UA_STRING((char*)NAMESPACE_URI);
+    custom_namespace_idx = UA_Server_addNamespace(server, NAMESPACE_URI);
 
-    // Control the physical LED
-    pinMode(LED_PIN, OUTPUT);
-    digitalWrite(LED_PIN, ledValue ? HIGH : LOW);
+    UA_LOG_INFO(UA_Log_Stdout, UA_LOGCATEGORY_SERVER,
+                "Created namespace '%s' with index %d", NAMESPACE_URI, custom_namespace_idx);
 
-    // Update state for MTConnect
-    ledState = ledValue ? "true" : "false";
+    // Create device object node
+    UA_ObjectAttributes deviceAttr = UA_ObjectAttributes_default;
+    deviceAttr.displayName = UA_LOCALIZEDTEXT("en-US", (char*)DEVICE_BROWSE_NAME);
+    deviceAttr.description = UA_LOCALIZEDTEXT("en-US", "Arduino Opta Device Controller");
 
-    UA_LOG_INFO(UA_Log_Stdout, UA_LOGCATEGORY_SERVER, "LED Control via OPC UA: %s", ledState.c_str());
-  }
-  return UA_STATUSCODE_GOOD;
+    device_node_id = UA_NODEID_STRING(custom_namespace_idx, (char*)DEVICE_BROWSE_NAME);
+
+    UA_StatusCode retval = UA_Server_addObjectNode(server,
+                                                  device_node_id,
+                                                  UA_NODEID_NUMERIC(0, UA_NS0ID_OBJECTSFOLDER),
+                                                  UA_NODEID_NUMERIC(0, UA_NS0ID_ORGANIZES),
+                                                  UA_QUALIFIEDNAME(custom_namespace_idx, (char*)DEVICE_BROWSE_NAME),
+                                                  UA_NODEID_NUMERIC(0, UA_NS0ID_BASEOBJECTTYPE),
+                                                  deviceAttr, NULL, NULL);
+
+    if (retval == UA_STATUSCODE_GOOD) {
+        UA_LOG_INFO(UA_Log_Stdout, UA_LOGCATEGORY_SERVER,
+                    "Created device node '%s'", DEVICE_BROWSE_NAME);
+    } else {
+        UA_LOG_ERROR(UA_Log_Stdout, UA_LOGCATEGORY_SERVER,
+                     "Failed to create device node: %s", UA_StatusCode_name(retval));
+        return retval;
+    }
+
+    return UA_STATUSCODE_GOOD;
 }
 
-// MTConnect SHDR Functions
+// Add methods to the device node
+static UA_StatusCode addMethodsToDevice(UA_Server *server) {
+    UA_StatusCode retval = UA_STATUSCODE_GOOD;
+
+    // Add LED Control Method
+    UA_MethodAttributes ledMethodAttr = UA_MethodAttributes_default;
+    ledMethodAttr.description = UA_LOCALIZEDTEXT("en-US", "Control LED state");
+    ledMethodAttr.displayName = UA_LOCALIZEDTEXT("en-US", "LEDControl");
+    ledMethodAttr.executable = true;
+    ledMethodAttr.userExecutable = true;
+
+    // Input argument for LED method
+    UA_Argument inputArgument;
+    UA_Argument_init(&inputArgument);
+    inputArgument.description = UA_LOCALIZEDTEXT("en-US", "LED command (ON/OFF/TOGGLE)");
+    inputArgument.name = UA_STRING("command");
+    inputArgument.dataType = UA_TYPES[UA_TYPES_STRING].typeId;
+    inputArgument.valueRank = UA_VALUERANK_SCALAR;
+
+    // Output argument for LED method
+    UA_Argument outputArgument;
+    UA_Argument_init(&outputArgument);
+    outputArgument.description = UA_LOCALIZEDTEXT("en-US", "Command result");
+    outputArgument.name = UA_STRING("result");
+    outputArgument.dataType = UA_TYPES[UA_TYPES_STRING].typeId;
+    outputArgument.valueRank = UA_VALUERANK_SCALAR;
+
+    retval = UA_Server_addMethodNode(server,
+                                    UA_NODEID_STRING(custom_namespace_idx, "LEDControl"),
+                                    device_node_id,
+                                    UA_NODEID_NUMERIC(0, UA_NS0ID_HASCOMPONENT),
+                                    UA_QUALIFIEDNAME(custom_namespace_idx, "LEDControl"),
+                                    ledMethodAttr,
+                                    &ledControlMethodCallback,
+                                    1, &inputArgument,
+                                    1, &outputArgument,
+                                    NULL, NULL);
+
+    if (retval == UA_STATUSCODE_GOOD) {
+        UA_LOG_INFO(UA_Log_Stdout, UA_LOGCATEGORY_SERVER, "Added LEDControl method");
+    } else {
+        UA_LOG_ERROR(UA_Log_Stdout, UA_LOGCATEGORY_SERVER, "Failed to add LEDControl method");
+    }
+
+    return retval;
+}
+
+// MTConnect SHDR Functions (unchanged)
 void handleMTConnectClient(EthernetClient &client) {
   Serial.println("MTConnect agent connected");
 
@@ -139,12 +262,8 @@ void handleMTConnectClient(EthernetClient &client) {
         sendSHDRStringData(client, DATAITEM_IDS[i], currState[i]);
       }
 
-      // Send LED state
-      sendSHDRStringData(client, "LEDControl", ledState);
-
       alreadyConnected = true;
     } else {
-      // Monitor for state changes
       String newState[DATAITEMS_NB];
 
       for(int i = 0; i < DATAITEMS_NB; i++) {
@@ -237,33 +356,33 @@ void setup()
       UA_LOG_INFO(UA_Log_Stdout, UA_LOGCATEGORY_SERVER,
                   "Arduino Opta IP: %s", Ethernet.localIP().toString().c_str());
 
-      // Determine Arduino OPC UA hardware variant
+      // Create custom namespace and device node
+      if (createCustomNamespaceAndDevice(opc_ua_server) != UA_STATUSCODE_GOOD) {
+        UA_LOG_ERROR(UA_Log_Stdout, UA_LOGCATEGORY_SERVER, "Failed to create custom namespace/device");
+        return;
+      }
+
+      // Add methods to device node
+      if (addMethodsToDevice(opc_ua_server) != UA_STATUSCODE_GOOD) {
+        UA_LOG_ERROR(UA_Log_Stdout, UA_LOGCATEGORY_SERVER, "Failed to add methods to device");
+        return;
+      }
+
+      // Determine Arduino OPC UA hardware variant for standard nodes
       opcua::OptaVariant::Type opta_type;
-      if (!opcua::OptaVariant::getOptaVariant(opta_type)) {
-        UA_LOG_ERROR(UA_Log_Stdout, UA_LOGCATEGORY_SERVER, "opcua::OptaVariant::getOptaVariant(...) failed");
-        return;
+      if (opcua::OptaVariant::getOptaVariant(opta_type)) {
+        // Pre-configure analog pins
+        std::list<pin_size_t> const ADC_PIN_LIST = { A0, A1, A2, A3, A4, A5, A6, A7 };
+        for (auto const adc_pin : ADC_PIN_LIST)
+          arduino_opta_analog_read(adc_pin);
+        analogReadResolution(12);
+
+        // Create Arduino Opta OPC UA object (for standard nodes)
+        opta_opcua = opcua::Opta::create(opc_ua_server, opta_type);
+        if (opta_opcua) {
+          UA_LOG_INFO(UA_Log_Stdout, UA_LOGCATEGORY_SERVER, "Created standard Opta OPC UA nodes");
+        }
       }
-
-      // Pre-configure analog pins
-      std::list<pin_size_t> const ADC_PIN_LIST = { A0, A1, A2, A3, A4, A5, A6, A7 };
-      for (auto const adc_pin : ADC_PIN_LIST)
-        arduino_opta_analog_read(adc_pin);
-      analogReadResolution(12);
-
-      // Create Arduino Opta OPC UA object
-      opta_opcua = opcua::Opta::create(opc_ua_server, opta_type);
-      if (!opta_opcua) {
-        UA_LOG_ERROR(UA_Log_Stdout, UA_LOGCATEGORY_SERVER, "opcua::Opta::create(...) failed");
-        return;
-      }
-
-      // Add LED control output - this creates a writable OPC UA node
-      opta_opcua->addRelayOutput(opc_ua_server, "LED Control", [](bool const value) {
-        pinMode(LED_PIN, OUTPUT);
-        digitalWrite(LED_PIN, value);
-        ledState = value ? "true" : "false";
-        UA_LOG_INFO(UA_Log_Stdout, UA_LOGCATEGORY_SERVER, "LED Control: %s", ledState.c_str());
-      });
 
       UA_LOG_INFO(UA_Log_Stdout, UA_LOGCATEGORY_SERVER,
                   "stack: size = %d | free = %d | used = %d | max = %d",
@@ -278,7 +397,8 @@ void setup()
                   o1heapGetDiagnostics(o1heap_ins).allocated,
                   o1heapGetDiagnostics(o1heap_ins).peak_allocated);
 
-      // Run the OPC UA server
+      UA_LOG_INFO(UA_Log_Stdout, UA_LOGCATEGORY_SERVER, "OPC UA server setup complete");
+
       UA_StatusCode const status = UA_Server_runUntilInterrupt(opc_ua_server);
     });
 
@@ -295,6 +415,8 @@ void setup()
   Serial.print(Ethernet.localIP());
   Serial.print(":");
   Serial.println(MTCONNECT_PORT);
+  Serial.println("Custom namespace: " + String(NAMESPACE_URI));
+  Serial.println("Device browse name: " + String(DEVICE_BROWSE_NAME));
 }
 
 void loop()
