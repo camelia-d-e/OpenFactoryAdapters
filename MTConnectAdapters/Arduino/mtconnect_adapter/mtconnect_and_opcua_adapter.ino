@@ -60,7 +60,7 @@ EthernetClient mtconnect_client;
 String incoming = "";
 boolean alreadyConnected = false;
 String currState[DATAITEMS_NB];
-String ledState = "false";
+String ledState = "OFF";
 
 // OPC UA custom namespace and device node
 UA_UInt16 custom_namespace_idx = 0;
@@ -93,23 +93,23 @@ static UA_StatusCode ledControlMethodCallback(UA_Server *server,
         String result = "OK";
 
         // Parse command
-        if (command.equalsIgnoreCase("ON") || command.equalsIgnoreCase("true") || command.equalsIgnoreCase("1")) {
+        if (command.equalsIgnoreCase("ON") || command.equalsIgnoreCase("1")) {
             pinMode(LED_PIN, OUTPUT);
             digitalWrite(LED_PIN, HIGH);
-            ledState = "true";
+            ledState = "ON";
             UA_LOG_INFO(UA_Log_Stdout, UA_LOGCATEGORY_SERVER, "LED turned ON");
         }
-        else if (command.equalsIgnoreCase("OFF") || command.equalsIgnoreCase("false") || command.equalsIgnoreCase("0")) {
+        else if (command.equalsIgnoreCase("OFF") || command.equalsIgnoreCase("0")) {
             pinMode(LED_PIN, OUTPUT);
             digitalWrite(LED_PIN, LOW);
-            ledState = "false";
+            ledState = "OFF";
             UA_LOG_INFO(UA_Log_Stdout, UA_LOGCATEGORY_SERVER, "LED turned OFF");
         }
         else if (command.equalsIgnoreCase("TOGGLE")) {
             pinMode(LED_PIN, OUTPUT);
             bool currentState = digitalRead(LED_PIN);
             digitalWrite(LED_PIN, !currentState);
-            ledState = !currentState ? "true" : "false";
+            ledState = !currentState ? "ON" : "OFF";
             UA_LOG_INFO(UA_Log_Stdout, UA_LOGCATEGORY_SERVER, "LED toggled to %s", ledState.c_str());
         }
         else {
@@ -188,11 +188,10 @@ static UA_StatusCode createCustomNamespaceAndDevice(UA_Server *server) {
     return UA_STATUSCODE_GOOD;
 }
 
-// Add methods to the device node
+// Add LED Control Method to the device node
 static UA_StatusCode addMethodsToDevice(UA_Server *server) {
     UA_StatusCode retval = UA_STATUSCODE_GOOD;
 
-    // Add LED Control Method
     UA_MethodAttributes ledMethodAttr = UA_MethodAttributes_default;
     ledMethodAttr.description = UA_LOCALIZEDTEXT("en-US", "Control LED state");
     ledMethodAttr.displayName = UA_LOCALIZEDTEXT("en-US", "LEDControl");
@@ -235,7 +234,6 @@ static UA_StatusCode addMethodsToDevice(UA_Server *server) {
     return retval;
 }
 
-// MTConnect SHDR Functions (unchanged)
 void handleMTConnectClient(EthernetClient &client) {
   Serial.println("MTConnect agent connected");
 
@@ -277,7 +275,6 @@ void handleMTConnectClient(EthernetClient &client) {
       }
     }
 
-    // Handle incoming PING/PONG heartbeat
     if (client.available()) {
       char c = client.read();
       incoming += c;
