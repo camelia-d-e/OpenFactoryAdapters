@@ -22,7 +22,7 @@
  * CONSTANTS
  **************************************************************************************/
 
-#define LED_PIN A2
+#define LED_PIN LED_D0
 #define MTCONNECT_PORT 7878
 
 const uint16_t HEARTBEAT_TIMEOUT = 10000;
