@@ -62,6 +62,8 @@ EthernetClient mtconnect_client;
 String incoming = "";
 boolean alreadyConnected = false;
 String currState[DATAITEMS_NB];
+String buzzerStatus = "UNAVAILABLE";
+bool simulationMode = false;
 
 // OPC UA custom namespace and device node
 UA_UInt16 custom_namespace_idx = 0;
@@ -97,18 +99,20 @@ static UA_StatusCode buzzerControlMethodCallback(UA_Server *server,
         pinMode(ERROR_PIN, OUTPUT);
         pinMode(UNAVAILABLE_PIN, OUTPUT);
 
+        buzzerStatus = command;
+
         // Parse command
-        if (command.equalsIgnoreCase("OK")) {
+        if (command.equalsIgnoreCase("NORMAL")) {
             digitalWrite(OK_PIN, HIGH);
             digitalWrite(ERROR_PIN, LOW);
             digitalWrite(UNAVAILABLE_PIN, LOW);
-            UA_LOG_INFO(UA_Log_Stdout, UA_LOGCATEGORY_SERVER, "OK LED turned ON");
+            UA_LOG_INFO(UA_Log_Stdout, UA_LOGCATEGORY_SERVER, "NORMAL LED turned ON");
         }
-        else if (command.equalsIgnoreCase("ERROR")) {
+        else if (command.equalsIgnoreCase("FAULT")) {
             digitalWrite(OK_PIN, LOW);
             digitalWrite(ERROR_PIN, HIGH);
             digitalWrite(UNAVAILABLE_PIN, LOW);
-            UA_LOG_INFO(UA_Log_Stdout, UA_LOGCATEGORY_SERVER, "ERROR LED turned ON");
+            UA_LOG_INFO(UA_Log_Stdout, UA_LOGCATEGORY_SERVER, "FAULT LED turned ON");
         }
         else if (command.equalsIgnoreCase("UNAVAILABLE")) {
             digitalWrite(OK_PIN, LOW);
@@ -117,9 +121,39 @@ static UA_StatusCode buzzerControlMethodCallback(UA_Server *server,
             UA_LOG_INFO(UA_Log_Stdout, UA_LOGCATEGORY_SERVER, "UNAVAILABLE LED turned ON");
         }
         else {
-            result = "Unknown command. Use: OK, ERROR, UNAVAILABLE";
+            result = "Unknown command. Use: NORMAL, FAULT, UNAVAILABLE";
+            buzzerStatus = "UNAVAILABLE";
             UA_LOG_WARNING(UA_Log_Stdout, UA_LOGCATEGORY_SERVER, "Unknown buzzer command: %s", command.c_str());
         }
+
+        // Set output
+        if (outputSize == 1) {
+            UA_String resultString = UA_STRING_ALLOC(result.c_str());
+            UA_Variant_setScalarCopy(&output[0], &resultString, &UA_TYPES[UA_TYPES_STRING]);
+            UA_String_clear(&resultString);
+        }
+    }
+
+    return UA_STATUSCODE_GOOD;
+}
+
+// Method callback for simulation mode change
+static UA_StatusCode simulationModeMethodCallback(UA_Server *server,
+                                            const UA_NodeId *sessionId, void *sessionContext,
+                                            const UA_NodeId *methodId, void *methodContext,
+                                            const UA_NodeId *objectId, void *objectContext,
+                                            size_t inputSize, const UA_Variant *input,
+                                            size_t outputSize, UA_Variant *output) {
+
+    if (inputSize == 1 && input[0].type == &UA_TYPES[UA_TYPES_BOOLEAN]) {
+        UA_Boolean command = (UA_Boolean*)input[0].data;
+
+        UA_LOG_INFO(UA_Log_Stdout, UA_LOGCATEGORY_SERVER, "Simulation mode command received:  %d", command);
+
+        String result = "OK";
+
+        simulationMode = command;
+        UA_LOG_INFO(UA_Log_Stdout, UA_LOGCATEGORY_SERVER, "Simulation mode is %s", command? "activated": "deactivated");
 
         // Set output
         if (outputSize == 1) {
@@ -203,20 +237,20 @@ static UA_StatusCode addMethodsToDevice(UA_Server *server) {
     buzzerMethodAttr.userExecutable = true;
 
     // Input argument for buzzer method
-    UA_Argument inputArgument;
-    UA_Argument_init(&inputArgument);
-    inputArgument.description = UA_LOCALIZEDTEXT("en-US", "Buzzer command (OK/ERROR/UNAVAILABLE)");
-    inputArgument.name = UA_STRING("command");
-    inputArgument.dataType = UA_TYPES[UA_TYPES_STRING].typeId;
-    inputArgument.valueRank = UA_VALUERANK_SCALAR;
+    UA_Argument buzzerInputArgument;
+    UA_Argument_init(&buzzerInputArgument);
+    buzzerInputArgument.description = UA_LOCALIZEDTEXT("en-US", "Buzzer command (NORMAL/FAULT/UNAVAILABLE)");
+    buzzerInputArgument.name = UA_STRING("command");
+    buzzerInputArgument.dataType = UA_TYPES[UA_TYPES_STRING].typeId;
+    buzzerInputArgument.valueRank = UA_VALUERANK_SCALAR;
 
     // Output argument for buzzer method
-    UA_Argument outputArgument;
-    UA_Argument_init(&outputArgument);
-    outputArgument.description = UA_LOCALIZEDTEXT("en-US", "Command result");
-    outputArgument.name = UA_STRING("result");
-    outputArgument.dataType = UA_TYPES[UA_TYPES_STRING].typeId;
-    outputArgument.valueRank = UA_VALUERANK_SCALAR;
+    UA_Argument buzzerOutputArgument;
+    UA_Argument_init(&buzzerOutputArgument);
+    buzzerOutputArgument.description = UA_LOCALIZEDTEXT("en-US", "Buzzer command result");
+    buzzerOutputArgument.name = UA_STRING("result");
+    buzzerOutputArgument.dataType = UA_TYPES[UA_TYPES_STRING].typeId;
+    buzzerOutputArgument.valueRank = UA_VALUERANK_SCALAR;
 
     retval = UA_Server_addMethodNode(server,
                                     UA_NODEID_STRING(custom_namespace_idx, "BuzzerControl"),
@@ -225,8 +259,8 @@ static UA_StatusCode addMethodsToDevice(UA_Server *server) {
                                     UA_QUALIFIEDNAME(custom_namespace_idx, "BuzzerControl"),
                                     buzzerMethodAttr,
                                     &buzzerControlMethodCallback,
-                                    1, &inputArgument,
-                                    1, &outputArgument,
+                                    1, &buzzerInputArgument,
+                                    1, &buzzerOutputArgument,
                                     NULL, NULL);
 
     if (retval == UA_STATUSCODE_GOOD) {
@@ -235,11 +269,51 @@ static UA_StatusCode addMethodsToDevice(UA_Server *server) {
         UA_LOG_ERROR(UA_Log_Stdout, UA_LOGCATEGORY_SERVER, "Failed to add BuzzerControl method");
     }
 
+    UA_MethodAttributes simulationModeMethodAttr = UA_MethodAttributes_default;
+    simulationModeMethodAttr.description = UA_LOCALIZEDTEXT("en-US", "Change mode of execution to simulation");
+    simulationModeMethodAttr.displayName = UA_LOCALIZEDTEXT("en-US", "SimulationMode");
+    simulationModeMethodAttr.executable = true;
+    simulationModeMethodAttr.userExecutable = true;
+
+    // Input argument for simulation mode method
+    UA_Argument simulationModeInputArgument;
+    UA_Argument_init(&simulationModeInputArgument);
+    simulationModeInputArgument.description = UA_LOCALIZEDTEXT("en-US", "Simulation mode command (true/false)");
+    simulationModeInputArgument.name = UA_STRING("command");
+    simulationModeInputArgument.dataType = UA_TYPES[UA_TYPES_BOOLEAN].typeId;
+    simulationModeInputArgument.valueRank = UA_VALUERANK_SCALAR;
+
+    // Output argument for simulation mode method
+    UA_Argument simulationModeOutputArgument;
+    UA_Argument_init(&simulationModeOutputArgument);
+    simulationModeOutputArgument.description = UA_LOCALIZEDTEXT("en-US", "Command result");
+    simulationModeOutputArgument.name = UA_STRING("result");
+    simulationModeOutputArgument.dataType = UA_TYPES[UA_TYPES_STRING].typeId;
+    simulationModeOutputArgument.valueRank = UA_VALUERANK_SCALAR;
+
+    retval = UA_Server_addMethodNode(server,
+                                    UA_NODEID_STRING(custom_namespace_idx, "SimulationMode"),
+                                    device_node_id,
+                                    UA_NODEID_NUMERIC(0, UA_NS0ID_HASCOMPONENT),
+                                    UA_QUALIFIEDNAME(custom_namespace_idx, "SimulationMode"),
+                                    simulationModeMethodAttr,
+                                    &simulationModeMethodCallback,
+                                    1, &simulationModeInputArgument,
+                                    1, &simulationModeOutputArgument,
+                                    NULL, NULL);
+
+    if (retval == UA_STATUSCODE_GOOD) {
+        UA_LOG_INFO(UA_Log_Stdout, UA_LOGCATEGORY_SERVER, "Added SimulationMode method");
+    } else {
+        UA_LOG_ERROR(UA_Log_Stdout, UA_LOGCATEGORY_SERVER, "Failed to add SimulationMode method");
+    }
+
     return retval;
 }
 
 void handleMTConnectClient(EthernetClient &client) {
   Serial.println("MTConnect agent connected");
+  bool toolsUpdated = false;
 
   while(client.connected()) {
     if (!alreadyConnected) {
@@ -264,6 +338,8 @@ void handleMTConnectClient(EthernetClient &client) {
         sendSHDRStringData(client, DATAITEM_IDS[i], currState[i]);
       }
 
+      sendSHDRStringData(client, "Buzzer", buzzerStatus);
+
       alreadyConnected = true;
     } else {
       String newState[DATAITEMS_NB];
@@ -275,7 +351,16 @@ void handleMTConnectClient(EthernetClient &client) {
           delay(TRANSITION_TIME_DELAY);
           sendSHDRStringData(client, DATAITEM_IDS[i], newState[i]);
           currState[i] = newState[i];
+          toolsUpdated = true;
+
         }
+      }
+
+      if(toolsUpdated)
+      {
+        delay(TRANSITION_TIME_DELAY);
+        sendSHDRStringData(client, "Buzzer", buzzerStatus);
+        toolsUpdated = false;
       }
     }
 
