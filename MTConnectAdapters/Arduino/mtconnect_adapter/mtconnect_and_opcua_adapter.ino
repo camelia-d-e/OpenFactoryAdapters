@@ -6,7 +6,7 @@
  * - OPC UA server on port 4840
  *
  * Monitors digital inputs A0, A1 for tool status detection
- * Provides LED control via OPC UA writes
+ * Provides Buzzer control via OPC UA writes
  */
 
 /**************************************************************************************
@@ -22,7 +22,9 @@
  * CONSTANTS
  **************************************************************************************/
 
-#define LED_PIN LED_D0
+#define OK_PIN LED_D0
+#define ERROR_PIN LED_D1
+#define UNAVAILABLE_PIN LED_D2
 #define MTCONNECT_PORT 7878
 
 const uint16_t HEARTBEAT_TIMEOUT = 10000;
@@ -60,7 +62,6 @@ EthernetClient mtconnect_client;
 String incoming = "";
 boolean alreadyConnected = false;
 String currState[DATAITEMS_NB];
-String ledState = "OFF";
 
 // OPC UA custom namespace and device node
 UA_UInt16 custom_namespace_idx = 0;
@@ -76,8 +77,8 @@ REDIRECT_STDOUT_TO(Serial)
  * OPC UA METHOD CALLBACKS
  **************************************************************************************/
 
-// Method callback for LED control
-static UA_StatusCode ledControlMethodCallback(UA_Server *server,
+// Method callback for buzzer control
+static UA_StatusCode buzzerControlMethodCallback(UA_Server *server,
                                             const UA_NodeId *sessionId, void *sessionContext,
                                             const UA_NodeId *methodId, void *methodContext,
                                             const UA_NodeId *objectId, void *objectContext,
@@ -88,33 +89,36 @@ static UA_StatusCode ledControlMethodCallback(UA_Server *server,
         UA_String *inputString = (UA_String*)input[0].data;
         String command = String((char*)inputString->data).substring(0, inputString->length);
 
-        UA_LOG_INFO(UA_Log_Stdout, UA_LOGCATEGORY_SERVER, "LED Control command received: %s", command.c_str());
+        UA_LOG_INFO(UA_Log_Stdout, UA_LOGCATEGORY_SERVER, "Buzzer Control command received: %s", command.c_str());
 
         String result = "OK";
 
+        pinMode(OK_PIN, OUTPUT);
+        pinMode(ERROR_PIN, OUTPUT);
+        pinMode(UNAVAILABLE_PIN, OUTPUT);
+
         // Parse command
-        if (command.equalsIgnoreCase("ON") || command.equalsIgnoreCase("1")) {
-            pinMode(LED_PIN, OUTPUT);
-            digitalWrite(LED_PIN, HIGH);
-            ledState = "ON";
-            UA_LOG_INFO(UA_Log_Stdout, UA_LOGCATEGORY_SERVER, "LED turned ON");
+        if (command.equalsIgnoreCase("OK")) {
+            digitalWrite(OK_PIN, HIGH);
+            digitalWrite(ERROR_PIN, LOW);
+            digitalWrite(UNAVAILABLE_PIN, LOW);
+            UA_LOG_INFO(UA_Log_Stdout, UA_LOGCATEGORY_SERVER, "OK LED turned ON");
         }
-        else if (command.equalsIgnoreCase("OFF") || command.equalsIgnoreCase("0")) {
-            pinMode(LED_PIN, OUTPUT);
-            digitalWrite(LED_PIN, LOW);
-            ledState = "OFF";
-            UA_LOG_INFO(UA_Log_Stdout, UA_LOGCATEGORY_SERVER, "LED turned OFF");
+        else if (command.equalsIgnoreCase("ERROR")) {
+            digitalWrite(OK_PIN, LOW);
+            digitalWrite(ERROR_PIN, HIGH);
+            digitalWrite(UNAVAILABLE_PIN, LOW);
+            UA_LOG_INFO(UA_Log_Stdout, UA_LOGCATEGORY_SERVER, "ERROR LED turned ON");
         }
-        else if (command.equalsIgnoreCase("TOGGLE")) {
-            pinMode(LED_PIN, OUTPUT);
-            bool currentState = digitalRead(LED_PIN);
-            digitalWrite(LED_PIN, !currentState);
-            ledState = !currentState ? "ON" : "OFF";
-            UA_LOG_INFO(UA_Log_Stdout, UA_LOGCATEGORY_SERVER, "LED toggled to %s", ledState.c_str());
+        else if (command.equalsIgnoreCase("UNAVAILABLE")) {
+            digitalWrite(OK_PIN, LOW);
+            digitalWrite(ERROR_PIN, LOW);
+            digitalWrite(UNAVAILABLE_PIN, HIGH);
+            UA_LOG_INFO(UA_Log_Stdout, UA_LOGCATEGORY_SERVER, "UNAVAILABLE LED turned ON");
         }
         else {
-            result = "Unknown command. Use: ON, OFF, TOGGLE";
-            UA_LOG_WARNING(UA_Log_Stdout, UA_LOGCATEGORY_SERVER, "Unknown LED command: %s", command.c_str());
+            result = "Unknown command. Use: OK, ERROR, UNAVAILABLE";
+            UA_LOG_WARNING(UA_Log_Stdout, UA_LOGCATEGORY_SERVER, "Unknown buzzer command: %s", command.c_str());
         }
 
         // Set output
@@ -188,25 +192,25 @@ static UA_StatusCode createCustomNamespaceAndDevice(UA_Server *server) {
     return UA_STATUSCODE_GOOD;
 }
 
-// Add LED Control Method to the device node
+// Add buzzer Control Method to the device node
 static UA_StatusCode addMethodsToDevice(UA_Server *server) {
     UA_StatusCode retval = UA_STATUSCODE_GOOD;
 
-    UA_MethodAttributes ledMethodAttr = UA_MethodAttributes_default;
-    ledMethodAttr.description = UA_LOCALIZEDTEXT("en-US", "Control LED state");
-    ledMethodAttr.displayName = UA_LOCALIZEDTEXT("en-US", "LEDControl");
-    ledMethodAttr.executable = true;
-    ledMethodAttr.userExecutable = true;
+    UA_MethodAttributes buzzerMethodAttr = UA_MethodAttributes_default;
+    buzzerMethodAttr.description = UA_LOCALIZEDTEXT("en-US", "Control Buzzer state");
+    buzzerMethodAttr.displayName = UA_LOCALIZEDTEXT("en-US", "BuzzerControl");
+    buzzerMethodAttr.executable = true;
+    buzzerMethodAttr.userExecutable = true;
 
-    // Input argument for LED method
+    // Input argument for buzzer method
     UA_Argument inputArgument;
     UA_Argument_init(&inputArgument);
-    inputArgument.description = UA_LOCALIZEDTEXT("en-US", "LED command (ON/OFF/TOGGLE)");
+    inputArgument.description = UA_LOCALIZEDTEXT("en-US", "Buzzer command (OK/ERROR/UNAVAILABLE)");
     inputArgument.name = UA_STRING("command");
     inputArgument.dataType = UA_TYPES[UA_TYPES_STRING].typeId;
     inputArgument.valueRank = UA_VALUERANK_SCALAR;
 
-    // Output argument for LED method
+    // Output argument for buzzer method
     UA_Argument outputArgument;
     UA_Argument_init(&outputArgument);
     outputArgument.description = UA_LOCALIZEDTEXT("en-US", "Command result");
@@ -215,20 +219,20 @@ static UA_StatusCode addMethodsToDevice(UA_Server *server) {
     outputArgument.valueRank = UA_VALUERANK_SCALAR;
 
     retval = UA_Server_addMethodNode(server,
-                                    UA_NODEID_STRING(custom_namespace_idx, "LEDControl"),
+                                    UA_NODEID_STRING(custom_namespace_idx, "BuzzerControl"),
                                     device_node_id,
                                     UA_NODEID_NUMERIC(0, UA_NS0ID_HASCOMPONENT),
-                                    UA_QUALIFIEDNAME(custom_namespace_idx, "LEDControl"),
-                                    ledMethodAttr,
-                                    &ledControlMethodCallback,
+                                    UA_QUALIFIEDNAME(custom_namespace_idx, "BuzzerControl"),
+                                    buzzerMethodAttr,
+                                    &buzzerControlMethodCallback,
                                     1, &inputArgument,
                                     1, &outputArgument,
                                     NULL, NULL);
 
     if (retval == UA_STATUSCODE_GOOD) {
-        UA_LOG_INFO(UA_Log_Stdout, UA_LOGCATEGORY_SERVER, "Added LEDControl method");
+        UA_LOG_INFO(UA_Log_Stdout, UA_LOGCATEGORY_SERVER, "Added BuzzerControl method");
     } else {
-        UA_LOG_ERROR(UA_Log_Stdout, UA_LOGCATEGORY_SERVER, "Failed to add LEDControl method");
+        UA_LOG_ERROR(UA_Log_Stdout, UA_LOGCATEGORY_SERVER, "Failed to add BuzzerControl method");
     }
 
     return retval;
@@ -308,7 +312,10 @@ void setup()
   while(!Serial)
 
   // Initialize pins
-  pinMode(LED_PIN, OUTPUT);
+  pinMode(OK_PIN, OUTPUT);
+  pinMode(ERROR_PIN, OUTPUT);
+  pinMode(UNAVAILABLE_PIN, OUTPUT);
+
   for(int i = 0; i < DATAITEMS_NB; i++){
     pinMode(DATAITEM_PINS[i], INPUT);
   }
