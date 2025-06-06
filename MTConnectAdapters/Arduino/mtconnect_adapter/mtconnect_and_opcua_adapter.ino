@@ -145,22 +145,24 @@ static UA_StatusCode simulationModeMethodCallback(UA_Server *server,
                                             size_t inputSize, const UA_Variant *input,
                                             size_t outputSize, UA_Variant *output) {
 
-    if (inputSize == 1 && input[0].type == &UA_TYPES[UA_TYPES_BOOLEAN]) {
-        UA_Boolean command = (UA_Boolean*)input[0].data;
+     if (inputSize == 1 && input[0].type == &UA_TYPES[UA_TYPES_STRING])
+    {
+      UA_String *inputString = (UA_String*)input[0].data;
+      String command = String((char*)inputString->data).substring(0, inputString->length);
 
-        UA_LOG_INFO(UA_Log_Stdout, UA_LOGCATEGORY_SERVER, "Simulation mode command received:  %d", command);
+      UA_LOG_INFO(UA_Log_Stdout, UA_LOGCATEGORY_SERVER, "SimulationMode command received: %s", command.c_str());
 
-        String result = "OK";
+      String result = "OK";
 
-        simulationMode = command;
-        UA_LOG_INFO(UA_Log_Stdout, UA_LOGCATEGORY_SERVER, "Simulation mode is %s", command? "activated": "deactivated");
+      simulationMode = (command=="True"? true:false);
 
-        // Set output
-        if (outputSize == 1) {
-            UA_String resultString = UA_STRING_ALLOC(result.c_str());
-            UA_Variant_setScalarCopy(&output[0], &resultString, &UA_TYPES[UA_TYPES_STRING]);
-            UA_String_clear(&resultString);
-        }
+      UA_LOG_INFO(UA_Log_Stdout, UA_LOGCATEGORY_SERVER, "Simulation mode is %s", simulationMode? "activated" : "deactivated");
+
+      if (outputSize == 1) {
+          UA_String resultString = UA_STRING_ALLOC(result.c_str());
+          UA_Variant_setScalarCopy(&output[0], &resultString, &UA_TYPES[UA_TYPES_STRING]);
+          UA_String_clear(&resultString);
+      }
     }
 
     return UA_STATUSCODE_GOOD;
@@ -280,7 +282,7 @@ static UA_StatusCode addMethodsToDevice(UA_Server *server) {
     UA_Argument_init(&simulationModeInputArgument);
     simulationModeInputArgument.description = UA_LOCALIZEDTEXT("en-US", "Simulation mode command (true/false)");
     simulationModeInputArgument.name = UA_STRING("command");
-    simulationModeInputArgument.dataType = UA_TYPES[UA_TYPES_BOOLEAN].typeId;
+    simulationModeInputArgument.dataType = UA_TYPES[UA_TYPES_STRING].typeId;
     simulationModeInputArgument.valueRank = UA_VALUERANK_SCALAR;
 
     // Output argument for simulation mode method
