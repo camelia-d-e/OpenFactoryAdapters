@@ -87,7 +87,7 @@ static UA_StatusCode buzzerControlMethodCallback(UA_Server *server,
                                             size_t inputSize, const UA_Variant *input,
                                             size_t outputSize, UA_Variant *output) {
 
-    if (inputSize == 1 && input[0].type == &UA_TYPES[UA_TYPES_STRING]) {
+    if (inputSize == 1 && input[0].type == &UA_TYPES[UA_TYPES_STRING] && !simulationMode) {
         UA_String *inputString = (UA_String*)input[0].data;
         String command = String((char*)inputString->data).substring(0, inputString->length);
 
@@ -132,6 +132,9 @@ static UA_StatusCode buzzerControlMethodCallback(UA_Server *server,
             UA_Variant_setScalarCopy(&output[0], &resultString, &UA_TYPES[UA_TYPES_STRING]);
             UA_String_clear(&resultString);
         }
+    }else if(simulationMode)
+    {
+       UA_LOG_WARNING(UA_Log_Stdout, UA_LOGCATEGORY_SERVER, "Command ignored: simulation mode is activated.");
     }
 
     return UA_STATUSCODE_GOOD;
@@ -154,7 +157,7 @@ static UA_StatusCode simulationModeMethodCallback(UA_Server *server,
 
       String result = "OK";
 
-      simulationMode = (command=="True"? true:false);
+      simulationMode = (command=="true"? true:false);
 
       UA_LOG_INFO(UA_Log_Stdout, UA_LOGCATEGORY_SERVER, "Simulation mode is %s", simulationMode? "activated" : "deactivated");
 
@@ -496,7 +499,8 @@ void setup()
   // Start MTConnect server
   mtconnectServer.begin();
 
-  pinMode(LED_BUILTIN, OUTPUT);
+  pinMode(UNAVAILABLE_PIN, OUTPUT);
+  digitalWrite(UNAVAILABLE_PIN, HIGH);
 
   Serial.println("Servers started:");
   Serial.print("OPC UA: opc.tcp://");
