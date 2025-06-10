@@ -22,9 +22,10 @@
  * CONSTANTS
  **************************************************************************************/
 
-#define OK_PIN LED_D0
-#define ERROR_PIN LED_D1
+#define NORMAL_PIN LED_D0
+#define FAULT_PIN LED_D1
 #define UNAVAILABLE_PIN LED_D2
+#define GATE_PIN A2
 #define MTCONNECT_PORT 7878
 
 const uint16_t HEARTBEAT_TIMEOUT = 10000;
@@ -32,7 +33,7 @@ const uint16_t TRANSITION_TIME_DELAY = 3000;
 
 const uint8_t DATAITEMS_NB = 2;
 const String DATAITEM_IDS[] = {"A1ToolPlus", "A2ToolPlus"};
-const uint8_t DATAITEM_PINS[] = {A0, A1};
+const uint8_t DATAITEM_PINS[] = {A1, A2};
 
 // OPC UA namespace and device identifiers to match Python supervisor
 const char* NAMESPACE_URI = "demofactory";
@@ -95,28 +96,28 @@ static UA_StatusCode buzzerControlMethodCallback(UA_Server *server,
 
         String result = "OK";
 
-        pinMode(OK_PIN, OUTPUT);
-        pinMode(ERROR_PIN, OUTPUT);
+        pinMode(NORMAL_PIN, OUTPUT);
+        pinMode(FAULT_PIN, OUTPUT);
         pinMode(UNAVAILABLE_PIN, OUTPUT);
 
         buzzerStatus = command;
 
         // Parse command
         if (command.equalsIgnoreCase("NORMAL")) {
-            digitalWrite(OK_PIN, HIGH);
-            digitalWrite(ERROR_PIN, LOW);
+            digitalWrite(NORMAL_PIN, HIGH);
+            digitalWrite(FAULT_PIN, LOW);
             digitalWrite(UNAVAILABLE_PIN, LOW);
             UA_LOG_INFO(UA_Log_Stdout, UA_LOGCATEGORY_SERVER, "NORMAL LED turned ON");
         }
         else if (command.equalsIgnoreCase("FAULT")) {
-            digitalWrite(OK_PIN, LOW);
-            digitalWrite(ERROR_PIN, HIGH);
+            digitalWrite(NORMAL_PIN, LOW);
+            digitalWrite(FAULT_PIN, HIGH);
             digitalWrite(UNAVAILABLE_PIN, LOW);
             UA_LOG_INFO(UA_Log_Stdout, UA_LOGCATEGORY_SERVER, "FAULT LED turned ON");
         }
         else if (command.equalsIgnoreCase("UNAVAILABLE")) {
-            digitalWrite(OK_PIN, LOW);
-            digitalWrite(ERROR_PIN, LOW);
+            digitalWrite(NORMAL_PIN, LOW);
+            digitalWrite(FAULT_PIN, LOW);
             digitalWrite(UNAVAILABLE_PIN, HIGH);
             UA_LOG_INFO(UA_Log_Stdout, UA_LOGCATEGORY_SERVER, "UNAVAILABLE LED turned ON");
         }
@@ -343,6 +344,9 @@ void handleMTConnectClient(EthernetClient &client) {
         sendSHDRStringData(client, DATAITEM_IDS[i], currState[i]);
       }
 
+      String gateState = (arduino_opta_digital_read(GATE_PIN) == HIGH ? "OPENED": "CLOSED");
+      // Serial.println(gateState);
+
       sendSHDRStringData(client, "Buzzer", buzzerStatus);
 
       alreadyConnected = true;
@@ -360,6 +364,9 @@ void handleMTConnectClient(EthernetClient &client) {
 
         }
       }
+
+      // String gateState = (arduino_opta_digital_read(GATE_PIN) == HIGH ? "OPENED": "CLOSED");
+      // Serial.println(gateState);
 
       if(toolsUpdated)
       {
@@ -399,53 +406,95 @@ void setup()
 {
   Serial.begin(115200);
   auto const start = millis();
-  while(!Serial)
+  while(!Serial);
 
-  // Initialize pins
-  pinMode(OK_PIN, OUTPUT);
-  pinMode(ERROR_PIN, OUTPUT);
+  Serial.println("Initializing pins...");
+  pinMode(NORMAL_PIN, OUTPUT);
+  pinMode(FAULT_PIN, OUTPUT);
   pinMode(UNAVAILABLE_PIN, OUTPUT);
 
   for(int i = 0; i < DATAITEMS_NB; i++){
     pinMode(DATAITEM_PINS[i], INPUT);
   }
+  pinMode(GATE_PIN, INPUT);
+  Serial.println("   Pins initialized OK");
 
   // Initialize Ethernet interface
-  if (!Ethernet.begin()) {
-    Serial.println("\"Ethernet.begin()\" failed.");
-    for (;;) { }
+  Serial.println("Initializing Ethernet...");
+
+  IPAddress ip(10, 68, 14, 100);
+
+  Ethernet.begin(ip);
+  Serial.print("   Static IP set to: ");
+  Serial.println(Ethernet.localIP());
+
+
+  // Check link status
+  Serial.print("   Link Status: ");
+  Serial.println(Ethernet.linkStatus());
+
+  if (Ethernet.linkStatus() != LinkON) {
+    Serial.println("   WARNING: No Ethernet link detected!");
+    Serial.println("   Waiting for link...");
+    int timeout = 0;
+    while (Ethernet.linkStatus() != LinkON && timeout < 30) {
+      delay(1000);
+      Serial.print(".");
+      timeout++;
+    }
+    if (Ethernet.linkStatus() == LinkON) {
+      Serial.println("\n   Link established!");
+    } else {
+      Serial.println("\n   ERROR: Link timeout!");
+    }
   }
 
+  Serial.println("Setting up NTP time...");
   // Setup NTP time for OPC UA
   EthernetUDP udp_client;
   auto const epoch = opcua::NTPUtils::getTime(udp_client);
   if (epoch > 0) {
     set_time(epoch);
+    Serial.println("   NTP time set successfully");
   } else {
     set_time(opcua::timeToStr(__DATE__));
+    Serial.println("   Using compile time (NTP failed)");
   }
 
+  Serial.println("Initializing Opta Controller...");
   // Initialize Opta Controller
   OptaController.begin();
   OptaController.update();
+  Serial.println("   Opta Controller initialized");
 
+  Serial.println("Setting up OPC UA heap...");
   // Initialize heap memory for OPC UA
   o1heap_ins = o1heapInit(OPC_UA_SERVER_THREAD_HEAP.data(), OPC_UA_SERVER_THREAD_HEAP.size());
   if (o1heap_ins == nullptr) {
-    Serial.println("\"o1heapInit\" failed.");
+    Serial.println("   ERROR: o1heapInit failed!");
     for (;;) { }
   }
+  Serial.println("   Heap initialized successfully");
+
   UA_mallocSingleton  = o1heap_malloc;
   UA_freeSingleton    = o1heap_free;
   UA_callocSingleton  = o1heap_calloc;
   UA_reallocSingleton = o1heap_realloc;
 
+  Serial.println("Starting OPC UA server thread...");
   // Start OPC UA server in separate thread
   opc_ua_server_thread.start(
     +[]()
     {
+      Serial.println("   OPC UA thread started");
+
       // Create OPC UA server
       opc_ua_server = UA_Server_new();
+      if (opc_ua_server == nullptr) {
+        Serial.println("   ERROR: Failed to create OPC UA server!");
+        return;
+      }
+      Serial.println("   OPC UA server created");
 
       UA_LOG_INFO(UA_Log_Stdout, UA_LOGCATEGORY_SERVER,
                   "Arduino Opta IP: %s", Ethernet.localIP().toString().c_str());
@@ -455,12 +504,14 @@ void setup()
         UA_LOG_ERROR(UA_Log_Stdout, UA_LOGCATEGORY_SERVER, "Failed to create custom namespace/device");
         return;
       }
+      Serial.println("   Custom namespace created");
 
       // Add methods to device node
       if (addMethodsToDevice(opc_ua_server) != UA_STATUSCODE_GOOD) {
         UA_LOG_ERROR(UA_Log_Stdout, UA_LOGCATEGORY_SERVER, "Failed to add methods to device");
         return;
       }
+      Serial.println("   Methods added to device");
 
       // Determine Arduino OPC UA hardware variant for standard nodes
       opcua::OptaVariant::Type opta_type;
@@ -477,32 +528,24 @@ void setup()
           UA_LOG_INFO(UA_Log_Stdout, UA_LOGCATEGORY_SERVER, "Created standard Opta OPC UA nodes");
         }
       }
-
-      UA_LOG_INFO(UA_Log_Stdout, UA_LOGCATEGORY_SERVER,
-                  "stack: size = %d | free = %d | used = %d | max = %d",
-                  opc_ua_server_thread.stack_size(),
-                  opc_ua_server_thread.free_stack(),
-                  opc_ua_server_thread.used_stack(),
-                  opc_ua_server_thread.max_stack());
-
-      UA_LOG_INFO(UA_Log_Stdout, UA_LOGCATEGORY_SERVER,
-                  "o1heap: capacity: %d | allocated: %d | peak_allocated: %d",
-                  o1heapGetDiagnostics(o1heap_ins).capacity,
-                  o1heapGetDiagnostics(o1heap_ins).allocated,
-                  o1heapGetDiagnostics(o1heap_ins).peak_allocated);
-
-      UA_LOG_INFO(UA_Log_Stdout, UA_LOGCATEGORY_SERVER, "OPC UA server setup complete");
+      Serial.println("   About to start OPC UA server...");
 
       UA_StatusCode const status = UA_Server_runUntilInterrupt(opc_ua_server);
+      Serial.print("   OPC UA server exited with status: ");
+      Serial.println(status);
     });
 
+  Serial.println("Starting MTConnect server...");
   // Start MTConnect server
   mtconnectServer.begin();
+  Serial.print("   MTConnect server started on port ");
+  Serial.println(MTCONNECT_PORT);
 
   pinMode(UNAVAILABLE_PIN, OUTPUT);
   digitalWrite(UNAVAILABLE_PIN, HIGH);
 
-  Serial.println("Servers started:");
+  Serial.println("\n=== SERVER STARTUP COMPLETE ===");
+  Serial.println("Servers should now be running on:");
   Serial.print("OPC UA: opc.tcp://");
   Serial.print(Ethernet.localIP());
   Serial.println(":4840");
@@ -512,6 +555,7 @@ void setup()
   Serial.println(MTCONNECT_PORT);
   Serial.println("Custom namespace: " + String(NAMESPACE_URI));
   Serial.println("Device browse name: " + String(DEVICE_BROWSE_NAME));
+  Serial.println("=====================================");
 }
 
 void loop()
