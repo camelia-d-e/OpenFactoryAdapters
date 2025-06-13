@@ -24,16 +24,17 @@
 
 #define NORMAL_PIN LED_D0
 #define FAULT_PIN LED_D1
-#define UNAVAILABLE_PIN LED_D2
-#define GATE_PIN A2
+#define WARNING_PIN LED_D2
+#define GATE_PIN A0
 #define MTCONNECT_PORT 7878
 
 const uint16_t HEARTBEAT_TIMEOUT = 10000;
 const uint16_t TRANSITION_TIME_DELAY = 3000;
+const uint8_t GATE_CLOSED_THRESHOLD = 400;
 
-const uint8_t DATAITEMS_NB = 2;
-const String DATAITEM_IDS[] = {"A1ToolPlus", "A2ToolPlus"};
-const uint8_t DATAITEM_PINS[] = {A1, A2};
+const uint8_t TOOLPLUS_NB = 2;
+const String TOOLPLUS_IDS[] = {"A1ToolPlus", "A2ToolPlus"};
+const uint8_t TOOLPLUS_PINS[] = {A1, A2};
 
 // OPC UA namespace and device identifiers to match Python supervisor
 const char* NAMESPACE_URI = "demofactory";
@@ -62,8 +63,9 @@ EthernetServer mtconnectServer(MTCONNECT_PORT);
 EthernetClient mtconnect_client;
 String incoming = "";
 boolean alreadyConnected = false;
-String currState[DATAITEMS_NB];
-String buzzerStatus = "UNAVAILABLE";
+String currState[TOOLPLUS_NB];
+String currGateState;
+String buzzerStatus = "WARNING";
 bool simulationMode = false;
 
 // OPC UA custom namespace and device node
@@ -98,7 +100,7 @@ static UA_StatusCode buzzerControlMethodCallback(UA_Server *server,
 
         pinMode(NORMAL_PIN, OUTPUT);
         pinMode(FAULT_PIN, OUTPUT);
-        pinMode(UNAVAILABLE_PIN, OUTPUT);
+        pinMode(WARNING_PIN, OUTPUT);
 
         buzzerStatus = command;
 
@@ -106,24 +108,24 @@ static UA_StatusCode buzzerControlMethodCallback(UA_Server *server,
         if (command.equalsIgnoreCase("NORMAL")) {
             digitalWrite(NORMAL_PIN, HIGH);
             digitalWrite(FAULT_PIN, LOW);
-            digitalWrite(UNAVAILABLE_PIN, LOW);
+            digitalWrite(WARNING_PIN, LOW);
             UA_LOG_INFO(UA_Log_Stdout, UA_LOGCATEGORY_SERVER, "NORMAL LED turned ON");
         }
         else if (command.equalsIgnoreCase("FAULT")) {
             digitalWrite(NORMAL_PIN, LOW);
             digitalWrite(FAULT_PIN, HIGH);
-            digitalWrite(UNAVAILABLE_PIN, LOW);
+            digitalWrite(WARNING_PIN, LOW);
             UA_LOG_INFO(UA_Log_Stdout, UA_LOGCATEGORY_SERVER, "FAULT LED turned ON");
         }
-        else if (command.equalsIgnoreCase("UNAVAILABLE")) {
+        else if (command.equalsIgnoreCase("WARNING")) {
             digitalWrite(NORMAL_PIN, LOW);
             digitalWrite(FAULT_PIN, LOW);
-            digitalWrite(UNAVAILABLE_PIN, HIGH);
-            UA_LOG_INFO(UA_Log_Stdout, UA_LOGCATEGORY_SERVER, "UNAVAILABLE LED turned ON");
+            digitalWrite(WARNING_PIN, HIGH);
+            UA_LOG_INFO(UA_Log_Stdout, UA_LOGCATEGORY_SERVER, "WARNING LED turned ON");
         }
         else {
-            result = "Unknown command. Use: NORMAL, FAULT, UNAVAILABLE";
-            buzzerStatus = "UNAVAILABLE";
+            result = "Unknown command. Use: NORMAL, FAULT, WARNING";
+            buzzerStatus = "WARNING";
             UA_LOG_WARNING(UA_Log_Stdout, UA_LOGCATEGORY_SERVER, "Unknown buzzer command: %s", command.c_str());
         }
 
@@ -245,7 +247,7 @@ static UA_StatusCode addMethodsToDevice(UA_Server *server) {
     // Input argument for buzzer method
     UA_Argument buzzerInputArgument;
     UA_Argument_init(&buzzerInputArgument);
-    buzzerInputArgument.description = UA_LOCALIZEDTEXT("en-US", "Buzzer command (NORMAL/FAULT/UNAVAILABLE)");
+    buzzerInputArgument.description = UA_LOCALIZEDTEXT("en-US", "Buzzer command (NORMAL/FAULT/WARNING)");
     buzzerInputArgument.name = UA_STRING("command");
     buzzerInputArgument.dataType = UA_TYPES[UA_TYPES_STRING].typeId;
     buzzerInputArgument.valueRank = UA_VALUERANK_SCALAR;
@@ -328,8 +330,8 @@ void handleMTConnectClient(EthernetClient &client) {
         client.println("|avail|AVAILABLE\n");
         Serial.println("Sent: |avail|AVAILABLE\n");
       } else {
-        client.println("|avail|UNAVAILABLE\n");
-        Serial.println("Sent: |avail|UNAVAILABLE\n");
+        client.println("|avail|WARNING\n");
+        Serial.println("Sent: |avail|WARNING\n");
       }
 
       client.println("* shdrVersion: 2.0\n");
@@ -339,34 +341,54 @@ void handleMTConnectClient(EthernetClient &client) {
       Serial.println("Sent: * adapterVersion: 2.0\n");
 
       // Send initial tool states
-      for(int i = 0; i < DATAITEMS_NB; i++) {
-        currState[i] = (arduino_opta_digital_read(DATAITEM_PINS[i]) == HIGH ? "OFF" : "ON");
-        sendSHDRStringData(client, DATAITEM_IDS[i], currState[i]);
+      for(int i = 0; i < TOOLPLUS_NB; i++) {
+        currState[i] = (arduino_opta_digital_read(TOOLPLUS_PINS[i]) == HIGH ? "OFF" : "ON");
+        sendSHDRStringData(client, TOOLPLUS_IDS[i], currState[i]);
       }
 
-      String gateState = (arduino_opta_digital_read(GATE_PIN) == HIGH ? "OPENED": "CLOSED");
-      // Serial.println(gateState);
+      int gateVoltage = analogRead(GATE_PIN);
+      if (gateVoltage < GATE_CLOSED_THRESHOLD) {
+        currGateState = "OPEN";
+      } else {
+        currGateState = "CLOSED";
+      }
+      sendSHDRStringData(client, "A2BlastGate", currGateState);
+
+      Serial.print("Voltage: ");
+      Serial.println(gateVoltage);
 
       sendSHDRStringData(client, "Buzzer", buzzerStatus);
 
       alreadyConnected = true;
     } else {
-      String newState[DATAITEMS_NB];
+      String newState[TOOLPLUS_NB];
 
-      for(int i = 0; i < DATAITEMS_NB; i++) {
-        newState[i] = (arduino_opta_digital_read(DATAITEM_PINS[i]) == HIGH ? "OFF" : "ON");
+      for(int i = 0; i < TOOLPLUS_NB; i++) {
+        newState[i] = (arduino_opta_digital_read(TOOLPLUS_PINS[i]) == HIGH ? "OFF" : "ON");
 
         if(newState[i] != currState[i]) {
           delay(TRANSITION_TIME_DELAY);
-          sendSHDRStringData(client, DATAITEM_IDS[i], newState[i]);
+          sendSHDRStringData(client, TOOLPLUS_IDS[i], newState[i]);
           currState[i] = newState[i];
           toolsUpdated = true;
 
         }
       }
 
-      // String gateState = (arduino_opta_digital_read(GATE_PIN) == HIGH ? "OPENED": "CLOSED");
-      // Serial.println(gateState);
+      String newGateState;
+      int gateVoltage = analogRead(GATE_PIN);
+      if (gateVoltage < GATE_CLOSED_THRESHOLD) {
+        newGateState = "OPEN";
+      } else {
+        newGateState = "CLOSED";
+      }
+
+      if(newGateState != currGateState){
+        Serial.print("Voltage: ");
+        Serial.println(gateVoltage);
+        sendSHDRStringData(client, "A2BlastGate", newGateState);
+        currGateState = newGateState;
+      }
 
       if(toolsUpdated)
       {
@@ -411,10 +433,10 @@ void setup()
   Serial.println("Initializing pins...");
   pinMode(NORMAL_PIN, OUTPUT);
   pinMode(FAULT_PIN, OUTPUT);
-  pinMode(UNAVAILABLE_PIN, OUTPUT);
+  pinMode(WARNING_PIN, OUTPUT);
 
-  for(int i = 0; i < DATAITEMS_NB; i++){
-    pinMode(DATAITEM_PINS[i], INPUT);
+  for(int i = 0; i < TOOLPLUS_NB; i++){
+    pinMode(TOOLPLUS_PINS[i], INPUT);
   }
   pinMode(GATE_PIN, INPUT);
   Serial.println("   Pins initialized OK");
@@ -541,8 +563,8 @@ void setup()
   Serial.print("   MTConnect server started on port ");
   Serial.println(MTCONNECT_PORT);
 
-  pinMode(UNAVAILABLE_PIN, OUTPUT);
-  digitalWrite(UNAVAILABLE_PIN, HIGH);
+  pinMode(WARNING_PIN, OUTPUT);
+  digitalWrite(WARNING_PIN, HIGH);
 
   Serial.println("\n=== SERVER STARTUP COMPLETE ===");
   Serial.println("Servers should now be running on:");
