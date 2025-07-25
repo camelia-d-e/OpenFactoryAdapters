@@ -124,7 +124,8 @@ class MTCAdapter(socketserver.TCPServer):
         self.device = self.device_class()
 
         print("Creating Adapter")
-        socketserver.TCPServer.__init__(self, ('', self.adapter_port), self.agentRequestHandler_class)
+        socketserver.TCPServer.__init__(self, ('10.68.14.165', self.adapter_port), self.agentRequestHandler_class)
+        print(f'Running on : {self.server_address[0]}')
 
     def run(self):
         """
