@@ -75,10 +75,8 @@ class DustTrak:
                     break
 
                 if hasattr(packet, 'tcp') and hasattr(packet.tcp, 'payload'):
-                    packet_len = int(packet.length)
-
-                    if packet_len == 91:
-                        parsed_data = self.parse_hex_data(packet.tcp.payload)
+                    parsed_data = self.parse_hex_data(packet.tcp.payload)
+                    if not self.is_empty_data(parsed_data):
                         if parsed_data:
                             converted_data = self.convert_to_percent(parsed_data)
 
@@ -128,3 +126,11 @@ class DustTrak:
                 print(f"Error converting {concentration}: {e}")
                 percentages.append(0.0)
         return percentages
+    
+    def is_empty_data(self, parsed_data) -> bool:
+        """Check if message contains useful data"""
+        is_empty = True
+        for data_point in parsed_data:
+            if (float(data_point) != 0.0 and float(data_point) != 91.0):
+                is_empty = False
+        return is_empty
