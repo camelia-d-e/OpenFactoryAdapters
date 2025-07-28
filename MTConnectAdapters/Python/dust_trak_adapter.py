@@ -1,5 +1,5 @@
 from adapters.mtcadapter import MTCAdapter
-from mtcdevices.dust_trak import DustTrak
+from mtcdevices.dust_trak.dust_trak import DustTrak
 
 class DustTrakAdapter(MTCAdapter):
     device_class = DustTrak
@@ -7,7 +7,7 @@ class DustTrakAdapter(MTCAdapter):
 
     def __init__(self):
         super().__init__()
-        self.device = self.device_class()
+        self.device = self.device_class(readings_average_num=1)
     
     def run(self):
         """Start MTConnect adapter"""

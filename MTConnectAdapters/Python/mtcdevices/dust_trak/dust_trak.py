@@ -1,12 +1,15 @@
+import os
+from typing import Dict, List, Optional
 import threading
 import asyncio
-from typing import Dict, List, Optional
 import pyshark
+import pyautogui
+
 
 class DustTrak:
     """DustTrak device"""
 
-    def __init__(self, device_ip: str='169.254.66.117'):
+    def __init__(self, device_ip: str='169.254.66.117', readings_average_num: int=1):
         self.device_ip = device_ip
         self.latest_data = {
             'pm1_concentration': 0.0,
@@ -17,6 +20,8 @@ class DustTrak:
         }
         self.capture_thread = None
         self.running = False
+        self.readings_average_num = readings_average_num 
+        self.launch_dust_trak_monitoring()
 
     @property
     def name(self):
@@ -41,6 +46,38 @@ class DustTrak:
         return {
             "avail": "AVAILABLE",
         }
+    
+    def launch_dust_trak_monitoring(self):
+        """Launch DustTrak monitoring"""
+        try:
+            pyautogui.hotkey('win', 'd')
+            pyautogui.sleep(2)
+        except Exception as e:
+            print(f"Could not show desktop: {e}")
+
+        current_screenshot_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'templates', 'current_desktop.png')
+        pyautogui.screenshot(current_screenshot_path)
+        print(f"Current desktop screenshot saved to: {current_screenshot_path}")
+
+        try:
+            script_dir = os.path.dirname(os.path.abspath(__file__))
+            file_path = os.path.join(script_dir, 'templates', 'power_automate_shortcut.png')
+            if not os.path.exists(file_path):
+                print(f"Template image not found at {file_path}")
+                return
+            
+            shortcut_location = pyautogui.locateOnScreen(file_path, confidence=0.9)
+            if shortcut_location:
+                pyautogui.click(shortcut_location, button='left', clicks=2)
+                pyautogui.sleep(10) # Wait for the application to open
+                pyautogui.press('enter')
+                pyautogui.press('tab', presses=4, interval=0.5) # Navigate to the readings input
+                pyautogui.press('up', presses=self.readings_average_num-1, interval=0.5) # Set the number of readings
+                pyautogui.press('enter')
+            else:
+                print("Shortcut not found on screen")
+        except pyautogui.ImageNotFoundException:
+            print("Could not find the shortcut image")
 
     def start_capture(self):
         """Start capturing data in a background thread"""
