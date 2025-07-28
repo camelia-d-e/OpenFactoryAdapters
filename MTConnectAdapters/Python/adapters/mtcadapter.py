@@ -124,8 +124,24 @@ class MTCAdapter(socketserver.TCPServer):
         self.device = self.device_class()
 
         print("Creating Adapter")
-        socketserver.TCPServer.__init__(self, ('10.68.14.165', self.adapter_port), self.agentRequestHandler_class)
+        socketserver.TCPServer.__init__(self, (self.get_ip(), self.adapter_port), self.agentRequestHandler_class)
         print(f'Running on : {self.server_address[0]}')
+
+    def get_ip(self)-> str:
+        """ Get the current IP address of the machine
+        Returns:
+            str: IP address of the machine
+        """
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.settimeout(0)
+        try:
+            s.connect(('10.255.255.255', 1))
+            ip = s.getsockname()[0]
+        except Exception:
+            ip = '127.0.0.1'
+        finally:
+            s.close()
+        return ip
 
     def run(self):
         """
