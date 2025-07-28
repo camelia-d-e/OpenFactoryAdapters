@@ -1,0 +1,2 @@
+mtcdevices.dust_trak.templates.current_desktop.png
+__pycache__

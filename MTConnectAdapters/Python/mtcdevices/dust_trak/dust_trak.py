@@ -1,9 +1,10 @@
-import os
 from typing import Dict, List, Optional
 import threading
 import asyncio
 import pyshark
 import pyautogui
+import os
+import time
 
 
 class DustTrak:
@@ -20,6 +21,8 @@ class DustTrak:
         }
         self.capture_thread = None
         self.running = False
+        self.data_updates_timer = 0
+        self.no_packet_received_timer = 0
         self.readings_average_num = readings_average_num 
         self.launch_dust_trak_monitoring()
 
@@ -102,6 +105,8 @@ class DustTrak:
         try:
             print(f"Starting packet capture on Ethernet 4 from {self.device_ip}...")
 
+            # Start capturing packets from the specified interface
+
             capture = pyshark.LiveCapture(
                 interface='Ethernet 4',
                 display_filter=f'ip.src=={self.device_ip}'
@@ -112,10 +117,21 @@ class DustTrak:
                     break
 
                 if hasattr(packet, 'tcp') and hasattr(packet.tcp, 'payload'):
-                    parsed_data = self.parse_hex_data(packet.tcp.payload)
-                    if not self.is_empty_data(parsed_data):
+                    parsed_data: List[str] = self.parse_hex_data(packet.tcp.payload)
+                    if not self.is_empty_data(parsed_data) and len(parsed_data) >= 4:
                         if parsed_data:
                             converted_data = self.convert_to_percent(parsed_data)
+
+                            if not self.is_data_updated(converted_data) and self.data_updates_timer == 0:
+                                self.data_updates_timer = time.time()
+                                time.sleep(1)
+                            elif not self.is_data_updated(converted_data) and time.time() - self.data_updates_timer > 30:
+                                print("No new data received for 20 seconds, restarting monitoring...")
+                                self.launch_dust_trak_monitoring()
+                                self.data_updates_timer = 0
+                            elif self.is_data_updated(converted_data):
+                                self.data_updates_timer = 0
+                            
 
                             self.latest_data = {
                                 'pm1_concentration': converted_data[0],
@@ -124,7 +140,12 @@ class DustTrak:
                                 'pm10_concentration': converted_data[3],
                                 'avail': 'AVAILABLE'
                             }
-                            print(f"Updated data: {self.latest_data}")
+            if self.no_packet_recieved_timer == 0:
+                self.no_packet_recieved_timer = time.time()
+            elif time.time() - self.no_packet_recieved_timer > 30:
+                print("No packets received for 30 seconds, restarting monitoring...")
+                self.launch_dust_trak_monitoring()
+                self.no_packet_recieved_timer = 0
         except Exception as e:
             print(f"Error in capture loop: {e}")
             self.latest_data['avail'] = 'UNAVAILABLE'
@@ -133,12 +154,19 @@ class DustTrak:
                 loop.close()
             except Exception as e:
                 print(f"Error closing event loop: {e}")
+                
+    def is_data_updated(self, new_data: List[float]) -> bool:
+        """Check if the new data is different from the latest data"""   
+        return not (self.latest_data['pm1_concentration'] == new_data[0] and
+                self.latest_data['pm2_5_concentration'] == new_data[1] and
+                self.latest_data['pm4_concentration'] == new_data[2] and
+                self.latest_data['pm10_concentration'] == new_data[3])
 
     def read_data(self) -> Dict[str, float]:
         """Return the latest captured data"""
         return self.latest_data.copy()
 
-    def parse_hex_data(self, raw_data: str) -> Optional[List[str]]:
+    def parse_hex_data(self, raw_data: str) -> List[str]:
         """Decodes and parses raw hex data from TCP messages"""
         try:
             bytes_obj = bytes.fromhex(raw_data.replace(":", ""))
@@ -146,11 +174,10 @@ class DustTrak:
 
             parsed_data = decoded_str.split(',')
             data_values = parsed_data[1:-1]
-            print(f"Parsed data: {data_values}")
             return data_values
         except (ValueError, UnicodeDecodeError) as e:
             print(f"Error parsing hex data: {e}")
-            return None
+            return ['']
 
     def convert_to_percent(self, concentrations: List[str]) -> List[float]:
         """Convert concentration values to percentage"""
