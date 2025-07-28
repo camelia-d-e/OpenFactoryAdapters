@@ -1,10 +1,12 @@
-from typing import Dict, List, Optional
+from datetime import datetime
+from typing import Dict, List
 import threading
+import os
+import time
+import csv
 import asyncio
 import pyshark
 import pyautogui
-import os
-import time
 
 
 class DustTrak:
@@ -63,8 +65,8 @@ class DustTrak:
         print(f"Current desktop screenshot saved to: {current_screenshot_path}")
 
         try:
-            script_dir = os.path.dirname(os.path.abspath(__file__))
-            file_path = os.path.join(script_dir, 'templates', 'power_automate_shortcut.png')
+            current_dir = os.path.dirname(os.path.abspath(__file__))
+            file_path = os.path.join(current_dir, 'templates', 'power_automate_shortcut.png')
             if not os.path.exists(file_path):
                 print(f"Template image not found at {file_path}")
                 return
@@ -105,8 +107,6 @@ class DustTrak:
         try:
             print(f"Starting packet capture on Ethernet 4 from {self.device_ip}...")
 
-            # Start capturing packets from the specified interface
-
             capture = pyshark.LiveCapture(
                 interface='Ethernet 4',
                 display_filter=f'ip.src=={self.device_ip}'
@@ -120,6 +120,13 @@ class DustTrak:
                     parsed_data: List[str] = self.parse_hex_data(packet.tcp.payload)
                     if not self.is_empty_data(parsed_data) and len(parsed_data) >= 4:
                         if parsed_data:
+                            self.write_to_csv({
+                                'pm1_concentration': parsed_data[0],
+                                'pm2_5_concentration': parsed_data[1],
+                                'pm4_concentration': parsed_data[2],
+                                'pm10_concentration': parsed_data[3],
+                            })
+
                             converted_data = self.convert_to_percent(parsed_data)
 
                             if not self.is_data_updated(converted_data) and self.data_updates_timer == 0:
@@ -131,21 +138,22 @@ class DustTrak:
                                 self.data_updates_timer = 0
                             elif self.is_data_updated(converted_data):
                                 self.data_updates_timer = 0
-                            
 
-                            self.latest_data = {
-                                'pm1_concentration': converted_data[0],
-                                'pm2_5_concentration': converted_data[1],
-                                'pm4_concentration': converted_data[2],
-                                'pm10_concentration': converted_data[3],
-                                'avail': 'AVAILABLE'
-                            }
-            if self.no_packet_recieved_timer == 0:
-                self.no_packet_recieved_timer = time.time()
-            elif time.time() - self.no_packet_recieved_timer > 30:
+                                self.latest_data = {
+                                    'pm1_concentration': converted_data[0],
+                                    'pm2_5_concentration': converted_data[1],
+                                    'pm4_concentration': converted_data[2],
+                                    'pm10_concentration': converted_data[3],
+                                    'avail': 'AVAILABLE'
+                                }
+
+
+            if self.no_packet_received_timer == 0:
+                self.no_packet_received_timer = time.time()
+            elif time.time() - self.no_packet_received_timer > 30:
                 print("No packets received for 30 seconds, restarting monitoring...")
                 self.launch_dust_trak_monitoring()
-                self.no_packet_recieved_timer = 0
+                self.no_packet_received_timer = 0
         except Exception as e:
             print(f"Error in capture loop: {e}")
             self.latest_data['avail'] = 'UNAVAILABLE'
@@ -190,6 +198,28 @@ class DustTrak:
                 print(f"Error converting {concentration}: {e}")
                 percentages.append(0.0)
         return percentages
+    
+    def write_to_csv(self, data: Dict[str, str]) -> None:
+        """Write data to CSV file"""
+        csv_data = data.copy()
+
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        file_path = os.path.join(current_dir, 'logs', f'{datetime.today().strftime('%Y-%m-%d')}.csv')
+
+        csv_data['timestamp'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+        with open(file=file_path, mode='a', newline='', encoding='utf-8') as csvfile:
+            fieldnames = []
+            for key in csv_data.keys():
+                fieldnames.append(key)
+
+            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+
+            csvfile.seek(0, 2)
+            if csvfile.tell() == 0:
+                writer.writeheader()
+
+            writer.writerow(csv_data)
     
     def is_empty_data(self, parsed_data) -> bool:
         """Check if message contains useful data"""
