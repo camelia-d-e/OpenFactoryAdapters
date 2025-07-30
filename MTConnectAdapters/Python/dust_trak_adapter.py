@@ -7,7 +7,7 @@ class DustTrakAdapter(MTCAdapter):
 
     def __init__(self):
         super().__init__()
-        self.device = self.device_class(readings_average_num=1)
+        self.device = self.device_class(readings_average_num=10)
     
     def run(self):
         """Start MTConnect adapter"""

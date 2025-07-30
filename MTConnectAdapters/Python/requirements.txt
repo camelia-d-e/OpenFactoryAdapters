@@ -1,0 +1,4 @@
+pyshark
+Pillow
+pyautogui
+OpenCV-python

@@ -2,9 +2,6 @@ import sys
 import socket
 import socketserver
 import getpass
-import mtcadapter
-from mtcadapter.exceptions import ImproperlyConfigured
-
 
 class AgentRequestHandler(socketserver.BaseRequestHandler):
     """
@@ -41,13 +38,14 @@ class AgentRequestHandler(socketserver.BaseRequestHandler):
                 self.request.sendall((f"|{id}|{data[id]}\n").encode())
                 if self.DEBUG:
                     print(f"|{id}|{data[id]}")
-                self.__data_old__[id] = data[id]
+                if id != 'avail':
+                    self.__data_old__[id] = data[id]
 
     def handle(self):
         """
         Handle connection from MTConnect Agent
         """
-        print("Connection from {}".format(self.client_address[0]))
+        print(f"Connection from {self.client_address[0]}")
 
         # enable TCP keepalive
         self.request.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
@@ -68,7 +66,7 @@ class AgentRequestHandler(socketserver.BaseRequestHandler):
         # send initial SHDR data
         self.request.sendall(("|operator|" + getpass.getuser() + "\n").encode())
         self.request.sendall(("* shdrVersion: 2.0\n").encode())
-        self.request.sendall((f"* adapterVersion: {mtcadapter.__version__}\n").encode())
+        self.request.sendall((f"* adapterVersion: {2.0}\n").encode())
         manufacturer = self.device.manufacturer()
         serialNumber = self.device.serialNumber()
         if manufacturer:
@@ -152,3 +150,7 @@ class MTCAdapter(socketserver.TCPServer):
             self.serve_forever()
         except KeyboardInterrupt:
             sys.exit(0)
+
+class ImproperlyConfigured(Exception):
+    """ Something is improperly configured """
+    pass

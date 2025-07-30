@@ -1,5 +1,6 @@
 from datetime import datetime
 from typing import Dict, List
+from mtcdevices.mtcdevice import MTCDevice
 import threading
 import os
 import time
@@ -9,7 +10,7 @@ import pyshark
 import pyautogui
 
 
-class DustTrak:
+class DustTrak(MTCDevice):
     """DustTrak device"""
 
     def __init__(self, device_ip: str='169.254.66.117', readings_average_num: int=1):
@@ -39,7 +40,7 @@ class DustTrak:
 
     def manufacturer(self):
         """Device manufacturer"""
-        return "TSI"
+        return 'TSI'
 
     def serialNumber(self):
         """Device serial number."""
@@ -62,7 +63,6 @@ class DustTrak:
 
         current_screenshot_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'templates', 'current_desktop.png')
         pyautogui.screenshot(current_screenshot_path)
-        print(f"Current desktop screenshot saved to: {current_screenshot_path}")
 
         try:
             current_dir = os.path.dirname(os.path.abspath(__file__))
