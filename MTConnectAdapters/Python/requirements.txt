@@ -2,3 +2,4 @@ pyshark
 Pillow
 pyautogui
 OpenCV-python
+pyserial

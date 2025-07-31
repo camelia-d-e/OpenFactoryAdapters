@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+from typing import Optional
 
 
 class MTCDevice(ABC):
@@ -7,14 +8,14 @@ class MTCDevice(ABC):
     """
 
     @abstractmethod
-    def manufacturer(self):
+    def manufacturer(self)-> Optional[str]:
         """
         Return device manufacturer
         """
         return None
 
     @abstractmethod
-    def serialNumber(self):
+    def serialNumber(self)-> Optional[str]:
         """
         Return device serial number
         """
@@ -28,7 +29,7 @@ class MTCDevice(ABC):
         return {}
 
     @abstractmethod
-    def health_check(self):
+    def health_check(self)-> Optional[bool]:
         """
         Return health status of device connection
         """
