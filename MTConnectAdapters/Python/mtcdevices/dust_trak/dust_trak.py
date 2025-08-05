@@ -135,7 +135,6 @@ class DustTrak(MTCDevice):
                                 'pm10_concentration': parsed_data[3],
                             })
                         elif self.data_export_type == "openfactory":
-                            print('allo')
                             converted_data = self.convert_to_percent(parsed_data)
 
                             if not self.is_data_updated(converted_data) and self.data_updates_timer == 0:
