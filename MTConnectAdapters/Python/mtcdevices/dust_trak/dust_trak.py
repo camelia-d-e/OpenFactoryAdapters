@@ -1,6 +1,3 @@
-from datetime import datetime
-from typing import Dict, List
-from mtcdevices.mtcdevice import MTCDevice
 import threading
 import os
 import time
@@ -8,12 +5,24 @@ import csv
 import asyncio
 import pyshark
 import pyautogui
+import json
+from datetime import datetime
+from typing import Dict, List
+from mtcdevices.mtcdevice import MTCDevice
+
 
 
 class DustTrak(MTCDevice):
     """DustTrak device"""
 
-    def __init__(self, device_ip: str='169.254.66.117', readings_average_num: int=1):
+    def __init__(self, device_ip: str='169.254.66.117'):
+        config_data = []
+        self.current_dir = os.path.dirname(os.path.abspath(__file__))
+        file_path = os.path.join(self.current_dir, 'config.json')
+        with open(file_path, 'r', encoding='utf-8') as file:
+            config_data = json.load(file)
+
+        self.data_export_type = config_data['data_export_type']
         self.device_ip = device_ip
         self.latest_data = {
             'pm1_concentration': 0.0,
@@ -26,7 +35,7 @@ class DustTrak(MTCDevice):
         self.running = False
         self.data_updates_timer = 0
         self.no_packet_received_timer = 0
-        self.readings_average_num = readings_average_num 
+        self.readings_average_num = config_data['numberOfReadings']
         self.launch_dust_trak_monitoring()
 
     @property
@@ -65,8 +74,7 @@ class DustTrak(MTCDevice):
         pyautogui.screenshot(current_screenshot_path)
 
         try:
-            current_dir = os.path.dirname(os.path.abspath(__file__))
-            file_path = os.path.join(current_dir, 'templates', 'power_automate_shortcut.png')
+            file_path = os.path.join(self.current_dir, 'templates', 'power_automate_shortcut.png')
             if not os.path.exists(file_path):
                 print(f"Template image not found at {file_path}")
                 return
@@ -74,7 +82,7 @@ class DustTrak(MTCDevice):
             shortcut_location = pyautogui.locateOnScreen(file_path, confidence=0.9)
             if shortcut_location:
                 pyautogui.click(shortcut_location, button='left', clicks=2)
-                pyautogui.sleep(10) # Wait for the application to open
+                pyautogui.sleep(15) # Wait for the application to open
                 pyautogui.press('enter')
                 pyautogui.press('tab', presses=4, interval=0.5) # Navigate to the readings input
                 pyautogui.press('up', presses=self.readings_average_num-1, interval=0.5) # Set the number of readings
@@ -119,14 +127,15 @@ class DustTrak(MTCDevice):
                 if hasattr(packet, 'tcp') and hasattr(packet.tcp, 'payload'):
                     parsed_data: List[str] = self.parse_hex_data(packet.tcp.payload)
                     if not self.is_empty_data(parsed_data) and len(parsed_data) >= 4:
-                        if parsed_data:
+                        if self.data_export_type == "csv":
                             self.write_to_csv({
                                 'pm1_concentration': parsed_data[0],
                                 'pm2_5_concentration': parsed_data[1],
                                 'pm4_concentration': parsed_data[2],
                                 'pm10_concentration': parsed_data[3],
                             })
-
+                        elif self.data_export_type == "openfactory":
+                            print('allo')
                             converted_data = self.convert_to_percent(parsed_data)
 
                             if not self.is_data_updated(converted_data) and self.data_updates_timer == 0:
@@ -146,7 +155,6 @@ class DustTrak(MTCDevice):
                                     'pm10_concentration': converted_data[3],
                                     'avail': 'AVAILABLE'
                                 }
-
 
             if self.no_packet_received_timer == 0:
                 self.no_packet_received_timer = time.time()
@@ -203,8 +211,7 @@ class DustTrak(MTCDevice):
         """Write data to CSV file"""
         csv_data = data.copy()
 
-        current_dir = os.path.dirname(os.path.abspath(__file__))
-        file_path = os.path.join(current_dir, 'logs', f'{datetime.today().strftime('%Y-%m-%d')}.csv')
+        file_path = os.path.join(self.current_dir, 'logs', f'{datetime.today().strftime('%Y-%m-%d')}.csv')
 
         csv_data['timestamp'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
